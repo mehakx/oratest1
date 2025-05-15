@@ -1,0 +1,54 @@
+body {
+  #visual-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none; /* so clicks pass through to your UI below */
+    z-index: 999;
+  }
+  
+    font-family: sans-serif;
+    max-width: 600px;
+    margin: 2rem auto;
+    padding: 1rem;
+  }
+  
+  button {
+    background-color: #ffd54f;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 25px;
+    cursor: pointer;
+    font-size: 1rem;
+  }
+  .chat-history {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+  .chat-input {
+    display: flex;
+  }
+  .chat-input input {
+    flex: 1;
+    padding: 8px;
+    margin-right: 4px;
+  }
+  
+  
+  .hidden {
+    display: none;
+  }
+  
+  #result {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    background-color: #fafafa;
+  }
+  
