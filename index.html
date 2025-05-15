@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+      background: #c3c554; /* Yellow-green background like in your screenshot */
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+    
+    #visual-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10; /* Lower z-index to be behind UI elements */
+    }
+    
+    #listening-indicator {
+      position: absolute;
+      top: 30px;
+      right: 30px;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background-color: #4CAF50;
+      animation: pulse 2s infinite;
+      z-index: 1500;
+    }
+    
+    @keyframes pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4);
+      }
+      70% {
+        box-shadow: 0 0 0 10px rgba(76, 175, 80, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+      }
+    }
+    
+    /* Status displayed at the top center as in your drawing */
+    #status {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 12px;
+      border-radius: 6px;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      font-size: 16px;
+      font-weight: bold; 
+      z-index: 1500;
+      text-align: center;
+      width: auto;
+      max-width: 80%;
+    }
+    
+    /* Emotion panel at the bottom, matching your drawing */
+    #emotion-panel {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 200px;
+      text-align: center;
+      background-color: rgba(0, 0, 0, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 8px;
+      padding: 8px 15px;
+      z-index: 1500;
+      animation: fadeIn 0.5s ease-out;
+    }
+    
+    #emotion-label {
+      color: #fff;
+      font-size: 18px;
+      margin-bottom: 8px;
+      text-transform: lowercase;
+      font-weight: bold;
+    }
+    
+    #intensity-bar {
+      height: 16px;
+      width: 100%;
+      background-color: #333;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+    
+    #intensity-fill {
+      height: 100%;
+      width: 30%;
+      background: repeating-linear-gradient(
+        45deg,
+        #555,
+        #555 5px,
+        #777 5px,
+        #777 10px
+      );
+      transition: width 0.5s, background 0.5s;
+    }
+    
+    #text-input-container {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 8px;
+      color: #fff;
+      z-index: 2000;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px) translateX(-50%); }
+      to { opacity: 1; transform: translateY(0) translateX(-50%); }
+    }
+  </style>
+  
+  <!-- Load p5 libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5.speech@0.0.3/lib/p5.speech.min.js"></script>
+</head>
+<body>
+  <!-- Listening indicator -->
+  <div id="listening-indicator"></div>
+  
+  <!-- Status indicator at the top -->
+  <div id="status">Detected: Confused (intensity: -30)</div>
+  
+  <!-- p5 will inject its <canvas> here -->
+  <div id="visual-container"></div>
+  
+  <!-- Emotion panel at the bottom -->
+  <div id="emotion-panel">
+    <div id="emotion-label">confused</div>
+    <div id="intensity-bar">
+      <div id="intensity-fill"></div>
+    </div>
+  </div>
+  
+  <script>
+  // Main variables
+  let recognition;
+  let isListening = false;
+  let confidences = { sad: 0, fear: 0, anger: 0, anxiety: 0, neutral: 1, excitement: 0, joy: 0 };
+  let lastTranscript = '';
+  let eyeOpen = true;
+  let blinkTimer;
+
+  // Error handling
+  let recognitionTimeout = null;
+  let consecutiveErrors = 0;
+  let maxConsecutiveErrors = 3;
+  let backoffTime = 1000;
+  let textInputActive = false;
+
+  // Visualization variables
+  let eyeImages = {};
+  let emotionSequences = {};
+  let emotionStyles = {};
+  let currentEmotion = "neutral";
+  let lastEmotion = "neutral";
+  let transitionProgress = 1.0;
+  let transitionSpeed = 0.05;
+  let timelapseFrame = 0;
+  let lastFrameUpdate = 0;
+  let frameUpdateInterval = 150;
+  let useDrawnEyes = true;
+  let animateDrawings = true;
+  let interactionPoints = [];
+
+  function preload() {
+    // style groups
+    emotionStyles = {
+      calm: ["neutral", "sad"],
+      energetic: ["excitement", "anxiety", "fear"],
+      positive: ["joy"],
+      negative: ["anger"]
+    };
+    
+    // sad sequence (skip missing 6)
+    emotionSequences.sad = [];
+    [1,2,3,4,5,7].forEach(i => {
+      emotionSequences.sad.push(loadImage(`/static/sad/sad_${i}.png`));
+    });
+    
+    // neutral
+    emotionSequences.neutral = [];
+    for (let i = 1; i <= 6; i++) {
+      emotionSequences.neutral.push(loadImage(`/static/neutral/neutral_${i}.png`));
+    }
+    
+    // energetic (indices match files)
+    const energeticIndices = [1,2,3,4,5,6,7,8,10]; // exclude index 9 due to missing file
+    emotionSequences.excitement = [];
+    emotionSequences.anxiety    = [];
+    emotionSequences.fear       = [];
+    energeticIndices.forEach(n => {
+      const img = loadImage(`/static/happy/energetic_${n}.png`);
+      emotionSequences.excitement.push(img);
+      emotionSequences.anxiety   .push(img);
+      emotionSequences.fear      .push(img);
+    });
+    
+    // joy static
+    emotionSequences.joy = [ loadImage(`/static/happy/happy_static.png`) ];
+    
+    // anger reuse energetic
+    emotionSequences.anger = emotionSequences.excitement.slice();
+    
+    // static fallbacks
+    eyeImages.sad        = loadImage(`/static/sad/sad_static.png`);
+    eyeImages.neutral    = loadImage(`/static/neutral/neutral_static.png`);
+    eyeImages.excitement = loadImage(`/static/happy/energetic_static.png`);
+    eyeImages.joy        = loadImage(`/static/happy/happy_static.png`);
+    eyeImages.anxiety    = loadImage(`/static/sad/anxiety_static.png`);
+    eyeImages.fear       = loadImage(`/static/sad/fear_static.png`);
+    eyeImages.anger      = eyeImages.excitement;
+  }
+
+  function setup() {
+    // Add error handler to catch p5.AudioIn issues
+    window.addEventListener('error', function(e) {
+      console.log('Error caught:', e);
+      console.trace();
+    });
+    
+    let canvas = createCanvas(windowWidth, windowHeight);
+    canvas.parent('visual-container');
+    colorMode(HSB,360,100,100,1);
+    noStroke();
+
+    setupSpeechRecognition();
+    // begin speech recognition immediately
+    startListening();
+    startBlinking();
+    
+    // We don't need to create emotion panel here as it's now in the HTML
+    console.log('setup done');
+  }
+
+  function setupSpeechRecognition() {
+    if (!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+      document.getElementById('status').innerText = 'Speech not supported. Please type.';
+      showTextInputFallback('Type your message below.');
+      return;
+    }
+    recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = e => {
+      const transcript = e.results[e.results.length-1][0].transcript.trim();
+      console.log('Transcript:',transcript);
+      if (transcript && transcript !== lastTranscript) {
+        lastTranscript = transcript;
+        processText(transcript);
+        consecutiveErrors = 0;
+        backoffTime = 1000;
+      }
+    };
+    recognition.onerror = e => {
+      console.error('Speech error',e.error);
+      consecutiveErrors++;
+      clearTimeout(recognitionTimeout);
+      if (consecutiveErrors>=maxConsecutiveErrors) showTextInputFallback('Speech failing — type instead.');
+      recognitionTimeout = setTimeout(startListening, backoffTime);
+    };
+    recognition.onend = ()=>{
+      console.log('Speech ended, restarting...');
+      if (!recognitionTimeout) recognitionTimeout = setTimeout(startListening, backoffTime);
+    };
+    window.addEventListener('mousedown',startListening);
+  }
+
+  function startListening(){
+    try { 
+      recognition.start(); 
+      isListening=true;
+      document.getElementById('status').innerText = 'The eye is listening. Just start speaking...';
+    } catch { 
+      recognitionTimeout = setTimeout(startListening,1000); 
+    }
+  }
+
+  function showTextInputFallback(msg){
+    if (textInputActive) return;
+    textInputActive=true;
+    const c = document.createElement('div'); c.id='text-input-container';
+    if (msg){const m=document.createElement('div');m.textContent=msg;c.appendChild(m);}  
+    const inp = document.createElement('input'); inp.placeholder='Type here...'; inp.style.padding='8px'; inp.style.margin='5px';
+    const btn = document.createElement('button'); btn.textContent='Go'; btn.onclick=()=>processText(inp.value);
+    c.append(inp,btn);
+    document.body.appendChild(c);
+  }
+
+  function getEmotionColor(emotion) {
+    const colors = {
+      sad: '#0000ff',      // Blue
+      fear: '#800080',     // Purple
+      anger: '#ff0000',    // Red
+      anxiety: '#ffa500',  // Orange
+      neutral: '#ffffff',  // White
+      excitement: '#ffff00', // Yellow
+      joy: '#00ff00'       // Green
+    };
+    return colors[emotion] || '#ffffff';
+  }
+
+  function processText(text){
+    fetch('/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})
+      .then(r=>r.json()).then(data=>{
+        confidences = data.confidences;
+        lastEmotion = currentEmotion;
+        currentEmotion = Object.keys(confidences).reduce((a,b)=>confidences[a]>confidences[b]?a:b);
+        transitionProgress=0;
+        timelapseFrame=0;
+        lastFrameUpdate=millis();
+        interactionPoints=[];
+        for(let i=0;i<15;i++) addInteractionPoints();
+        
+        // Update the status display at the top - simplified to match your drawing
+        const statusEl = document.getElementById('status');
+        const statusText = `Detected: ${data.emotion} (intensity: ${data.intensity})`;
+        statusEl.innerText = statusText;
+        statusEl.style.color = getEmotionColor(data.emotion);
+        
+        // Update the emotion panel at the bottom
+        const panel = document.getElementById('emotion-panel');
+        panel.style.display = 'block';
+        
+        document.getElementById('emotion-label').textContent = data.emotion;
+        document.getElementById('emotion-label').style.color = getEmotionColor(data.emotion);
+        
+        const intensityValue = Math.abs(data.intensity);
+        document.getElementById('intensity-fill').style.width = `${intensityValue}%`;
+        document.getElementById('intensity-fill').style.background = `repeating-linear-gradient(
+          45deg,
+          ${getEmotionColor(data.emotion)}88,
+          ${getEmotionColor(data.emotion)}88 5px,
+          ${getEmotionColor(data.emotion)} 5px,
+          ${getEmotionColor(data.emotion)} 10px
+        )`;
+        
+        // Create a visual flash for emotion change
+        const flashEl = document.createElement('div');
+        Object.assign(flashEl.style, {
+          position: 'fixed',
+          top: '0',
+          left: '0',
+          width: '100%',
+          height: '100%',
+          backgroundColor: getEmotionColor(data.emotion),
+          opacity: '0.2', 
+          pointerEvents: 'none',
+          transition: 'opacity 0.5s',
+          zIndex: '999'
+        });
+        document.body.appendChild(flashEl);
+        setTimeout(() => {
+          flashEl.style.opacity = '0';
+          setTimeout(() => flashEl.remove(), 500);
+        }, 100);
+        
+        eyeOpen=1.5; 
+        setTimeout(()=>eyeOpen=1.0,300);
+      }).catch(e=>{
+        console.error(e);
+        document.getElementById('status').innerText='Error analyzing.';
+      });
+  }
+
+  function startBlinking(){setTimeout(doBlink,random(2000,7000));}
+  function doBlink(){eyeOpen=0.1;setTimeout(()=>eyeOpen=1.0,200);setTimeout(doBlink,random(2000,7000));}
+
+  function draw(){
+    // Changed background to be transparent so we can see the CSS background color
+    clear();
+    if(transitionProgress<1)transitionProgress=min(1,transitionProgress+transitionSpeed);
+    if(animateDrawings && millis()-lastFrameUpdate>frameUpdateInterval){
+      lastFrameUpdate=millis();
+      const seq = emotionSequences[currentEmotion]||[];
+      timelapseFrame=(timelapseFrame+1)%(seq.length||1);
+    }
+    if(useDrawnEyes) drawCustomEye(); else drawEmotionEye();
+    drawInteractions();
+  }
+
+  function windowResized(){resizeCanvas(windowWidth,windowHeight);}
+
+  // Helper functions below
+  function drawCustomEye(){
+    push(); translate(width/2, height/2);
+    noFill(); stroke(0,0,80,0.3); strokeWeight(1);
+    // horizontal oval
+    ellipse(0,0,600,300);
+    // iris image tinted by emotion
+    const seq = emotionSequences[currentEmotion]||[];
+    if(seq.length){
+      tint(map(confidences[currentEmotion],0,1,0,360),80,100,transitionProgress);
+      const img = seq[timelapseFrame];
+      image(img,-img.width/2,-img.height/2);
+      noTint();
+    } else {
+      drawEmotionIris();
+    }
+    noStroke(); fill(0);
+    ellipse(0,0,50*eyeOpen,50*eyeOpen);
+    pop();
+  }
+
+  function drawEmotionEye(){
+    push(); translate(width/2, height/2);
+    noFill(); stroke(0,0,80); strokeWeight(2);
+    ellipse(0,0,600,300);
+    drawEmotionIris();
+    pop();
+  }
+
+  function drawEmotionIris(){
+    const hueVal = map(confidences[currentEmotion]||0,0,1,0,360);
+    fill(hueVal,80,100);
+    ellipse(width/2, height/2, 200,200);
+  }
+
+  function drawInteractions(){
+    noStroke(); fill(200,80,100);
+    interactionPoints.forEach(p=>{
+      ellipse(p.x, p.y, p.size);
+      p.size *= 0.95;
+      p.size<1 && (p.dead=true);
+    });
+    interactionPoints = interactionPoints.filter(p=>!p.dead);
+  }
+
+  function addInteractionPoints(){
+    interactionPoints.push({
+      x: random(width/2-200,width/2+200),
+      y: random(height/2-100,height/2+100),
+      size: random(5,20),
+      dead: false
+    });
+  }
+  </script>
+</body>
+</html>
+
+
+
+
+
+<!-- <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+ 
+  <style>
+    body, html {
+      margin: 0; 
+      padding: 0; 
+      overflow: hidden;
+      width: 100%; 
+      height: 100%; 
+      background: #111; 
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+    #visual-container {
+      position: absolute; 
+      top: 0; 
+      left: 0;
+      width: 100vw; 
+      height: 100vh;
+      z-index: 999;
+    }
+    header {
+      position: absolute; 
+      top: 10px; 
+      left: 20px; 
+      z-index: 1000;
+    }
+    #listening-indicator {
+      position: absolute;
+      top: 30px;
+      right: 30px;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background-color: #4CAF50;
+      animation: pulse 2s infinite;
+      z-index: 1500;
+    }
+    
+    @keyframes pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4);
+      }
+      70% {
+        box-shadow: 0 0 0 10px rgba(76, 175, 80, 0);
+      }
+      100% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+      }
+    }
+    #status {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      width: 100%;
+      text-align: center;
+      font-size: 18px;
+      color: #aaa;
+      z-index: 1500;
+    }
+  </style>
+  
+  <!-- Load p5 libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5.speech@0.0.3/lib/p5.speech.min.js"></script>
+</head>
+<body>
+ 
+  <div id="listening-indicator"></div>
+  
+  <!-- Status indicator -->
+  <div id="status">The eye is listening. Just start speaking...</div>
+  
+  <!-- p5 will inject its <canvas> here -->
+  <div id="visual-container"></div>
+  
+  <!-- Your sketch.js, correctly referenced using Flask's url_for -->
+  <script src="{{ url_for('static', filename='sketch.js') }}"></script>
+</body>
+</html> -->
